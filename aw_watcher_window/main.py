@@ -12,7 +12,7 @@ from aw_client import ActivityWatchClient
 from aw_core.log import setup_logging
 from aw_core.models import Event
 
-from .config import parse_args
+from .config import parse_args, load_config  
 from .exceptions import FatalError
 from .lib import get_current_window
 from .macos_permissions import background_ensure_permissions
@@ -135,7 +135,22 @@ def main():
     username_default = get_logged_in_user()
     hostname_default = client.client_hostname
 
-    username_eff, hostname_eff = _resolve_identity(username_default, hostname_default)
+    cfg = load_config()
+
+    cfg_user = (cfg.get("username_override") or "").strip()
+    cfg_host = (cfg.get("hostname_override") or "").strip()
+
+    env_user = (os.environ.get("AW_USERNAME_OVERRIDE") or "").strip()
+    env_host = (os.environ.get("AW_HOSTNAME_OVERRIDE") or "").strip()
+
+    cli_user = (getattr(args, "username_override", "") or "").strip()
+    cli_host = (getattr(args, "hostname_override", "") or "").strip()
+
+
+    username_eff = cli_user or env_user or cfg_user or username_default
+    hostname_eff_raw = cli_host or env_host or cfg_host or hostname_default
+
+    hostname_eff = _normalize_hostname(hostname_eff_raw)
 
     try:
         client.client_hostname = hostname_eff
