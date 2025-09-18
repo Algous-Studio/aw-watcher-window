@@ -95,14 +95,34 @@ def _normalize_hostname(h: str) -> str:
     return h or "unknown"
 
 
-def _resolve_identity(default_username: str, default_hostname: str) -> tuple[str, str]:
+def _resolve_identity(
+    username_default: str,
+    hostname_default: str,
+    args=None,
+    cfg: dict | None = None,
+) -> tuple[str, str]:
     """
-    Возвращает (username, hostname) с учётом env-override:
-      AW_USERNAME_OVERRIDE, AW_HOSTNAME_OVERRIDE.
-    Hostname нормализуем под короткий стиль (fx26 и т.п.).
+    Возвращает (username, hostname) с приоритетами:
+      CLI (--username-override/--hostname-override)
+      > ENV (AW_USERNAME_OVERRIDE/AW_HOSTNAME_OVERRIDE)
+      > CONFIG (username_override/hostname_override)
+      > DEFAULT (get_logged_in_user()/client.client_hostname)
+
+    Hostname дополнительно нормализуется (см. _normalize_hostname).
     """
-    username = os.environ.get("AW_USERNAME_OVERRIDE", "").strip() or default_username
-    hostname_raw = os.environ.get("AW_HOSTNAME_OVERRIDE", "").strip() or default_hostname
+    cfg = cfg or {}
+    # из TOML
+    cfg_user = (cfg.get("username_override") or "").strip()
+    cfg_host = (cfg.get("hostname_override") or "").strip()
+    # из ENV
+    env_user = (os.environ.get("AW_USERNAME_OVERRIDE") or "").strip()
+    env_host = (os.environ.get("AW_HOSTNAME_OVERRIDE") or "").strip()
+    # из CLI
+    cli_user = (getattr(args, "username_override", "") or "").strip() if args else ""
+    cli_host = (getattr(args, "hostname_override", "") or "").strip() if args else ""
+
+    username = cli_user or env_user or cfg_user or username_default
+    hostname_raw = cli_host or env_host or cfg_host or hostname_default
     hostname = _normalize_hostname(hostname_raw)
     return username, hostname
 
@@ -135,23 +155,16 @@ def main():
     username_default = get_logged_in_user()
     hostname_default = client.client_hostname
 
-    cfg = load_config()
+    cfg = load_config()  # секция [aw-watcher-window] уже загружается этим вызовом
 
-    cfg_user = (cfg.get("username_override") or "").strip()
-    cfg_host = (cfg.get("hostname_override") or "").strip()
+    username_eff, hostname_eff = _resolve_identity(
+        username_default=username_default,
+        hostname_default=hostname_default,
+        args=args,
+        cfg=cfg,
+    )
 
-    env_user = (os.environ.get("AW_USERNAME_OVERRIDE") or "").strip()
-    env_host = (os.environ.get("AW_HOSTNAME_OVERRIDE") or "").strip()
-
-    cli_user = (getattr(args, "username_override", "") or "").strip()
-    cli_host = (getattr(args, "hostname_override", "") or "").strip()
-
-
-    username_eff = cli_user or env_user or cfg_user or username_default
-    hostname_eff_raw = cli_host or env_host or cfg_host or hostname_default
-
-    hostname_eff = _normalize_hostname(hostname_eff_raw)
-
+    # (опционально) чтобы самоописание клиента совпадало с bucket
     try:
         client.client_hostname = hostname_eff
     except Exception:
