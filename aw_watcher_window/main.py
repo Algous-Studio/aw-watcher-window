@@ -12,7 +12,7 @@ from aw_client import ActivityWatchClient
 from aw_core.log import setup_logging
 from aw_core.models import Event
 
-from .config import parse_args
+from .config import parse_args, load_config  
 from .exceptions import FatalError
 from .lib import get_current_window
 from .macos_permissions import background_ensure_permissions
@@ -81,6 +81,52 @@ def running_over_ssh() -> bool:
     """True, если скрипт запущен из SSH‑сессии (SSH_CLIENT/SSH_TTY)."""
     return bool(os.environ.get("SSH_CLIENT") or os.environ.get("SSH_TTY"))
 
+def _normalize_hostname(h: str) -> str:
+    """
+    Нормализуем hostname:
+      - нижний регистр
+      - отбрасываем доменную часть (берём до первой точки)
+    """
+    if not h:
+        return "unknown"
+    h = h.strip().lower()
+    if "." in h:
+        h = h.split(".", 1)[0]
+    return h or "unknown"
+
+
+def _resolve_identity(
+    username_default: str,
+    hostname_default: str,
+    args=None,
+    cfg: dict | None = None,
+) -> tuple[str, str]:
+    """
+    Возвращает (username, hostname) с приоритетами:
+      CLI (--username-override/--hostname-override)
+      > ENV (AW_USERNAME_OVERRIDE/AW_HOSTNAME_OVERRIDE)
+      > CONFIG (username_override/hostname_override)
+      > DEFAULT (get_logged_in_user()/client.client_hostname)
+
+    Hostname дополнительно нормализуется (см. _normalize_hostname).
+    """
+    cfg = cfg or {}
+    # из TOML
+    cfg_user = (cfg.get("username_override") or "").strip()
+    cfg_host = (cfg.get("hostname_override") or "").strip()
+    # из ENV
+    env_user = (os.environ.get("AW_USERNAME_OVERRIDE") or "").strip()
+    env_host = (os.environ.get("AW_HOSTNAME_OVERRIDE") or "").strip()
+    # из CLI
+    cli_user = (getattr(args, "username_override", "") or "").strip() if args else ""
+    cli_host = (getattr(args, "hostname_override", "") or "").strip() if args else ""
+
+    username = cli_user or env_user or cfg_user or username_default
+    hostname_raw = cli_host or env_host or cfg_host or hostname_default
+    hostname = _normalize_hostname(hostname_raw)
+    return username, hostname
+
+
 def main():
     args = parse_args()
     if running_over_ssh():
@@ -105,8 +151,26 @@ def main():
     client = ActivityWatchClient(
         "aw-watcher-window", host=args.host, port=args.port, testing=args.testing
     )
-    username = get_logged_in_user()
-    bucket_id = f"{username}-window_{client.client_hostname}"
+
+    username_default = get_logged_in_user()
+    hostname_default = client.client_hostname
+
+    cfg = load_config()  # секция [aw-watcher-window] уже загружается этим вызовом
+
+    username_eff, hostname_eff = _resolve_identity(
+        username_default=username_default,
+        hostname_default=hostname_default,
+        args=args,
+        cfg=cfg,
+    )
+
+    # (опционально) чтобы самоописание клиента совпадало с bucket
+    try:
+        client.client_hostname = hostname_eff
+    except Exception:
+        pass
+
+    bucket_id = f"{username_eff}-window_{hostname_eff}"
     event_type = "currentwindow"
 
     client.create_bucket(bucket_id, event_type, queued=True)

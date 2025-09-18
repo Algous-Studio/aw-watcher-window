@@ -9,6 +9,8 @@ exclude_titles = []
 poll_time = 1.0
 strategy_macos = "swift"
 always_track_apps = "NukeX,Houdini FX"
+username_override = ""
+hostname_override = ""
 """.strip()
 
 
@@ -24,6 +26,8 @@ def parse_args():
     default_exclude_titles = config["exclude_titles"]
     default_strategy_macos = config["strategy_macos"]
     default_always_track_apps = config.get("always_track_apps", [])  # Безопасно получаем значение
+    default_username_override = config.get("username_override", "")
+    default_hostname_override = config.get("hostname_override", "")
 
     parser = argparse.ArgumentParser(
         description="A cross platform window watcher for Activitywatch.\nSupported on: Linux (X11), macOS and Windows."
@@ -61,6 +65,18 @@ def parse_args():
         nargs='+',
         default=default_always_track_apps,
         help="List of applications where window titles should always be tracked."
+    )
+    parser.add_argument(
+        "--username-override",
+        dest="username_override",
+        default=default_username_override,
+        help="Override username used in bucket IDs (takes precedence over config if provided).",
+    )
+    parser.add_argument(
+        "--hostname-override",
+        dest="hostname_override",
+        default=default_hostname_override,
+        help="Override hostname used in bucket IDs (takes precedence over config if provided).",
     )
 
     parsed_args = parser.parse_args()
